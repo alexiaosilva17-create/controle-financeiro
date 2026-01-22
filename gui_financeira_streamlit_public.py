@@ -153,7 +153,64 @@ with st.form("form_cartao"):
         except Exception as e:
             st.error(f"Erro: {e}")
 
-st.subheader("Excel")
+# Visualizar e editar dados
+st.markdown("---")
+st.subheader("Visualizar e Editar Dados")
+tab_view = st.selectbox("Escolha o que visualizar:", ["Gastos", "Receitas", "Investimentos", "Cartão"])
+
+if tab_view == "Gastos":
+    st.write("**Seus Gastos:**")
+    if len(cf.gastos) > 0:
+        st.dataframe(cf.gastos, use_container_width=True)
+        idx_deletar = st.number_input("Número da linha para deletar (0 é a primeira):", min_value=0, max_value=len(cf.gastos)-1, step=1)
+        if st.button("Deletar gasto"):
+            cf.gastos = cf.gastos.drop(idx_deletar).reset_index(drop=True)
+            cf.salvar_dados()
+            st.success("Gasto deletado!")
+            st.rerun()
+    else:
+        st.info("Nenhum gasto registrado ainda.")
+
+elif tab_view == "Receitas":
+    st.write("**Suas Receitas:**")
+    if len(cf.receitas) > 0:
+        st.dataframe(cf.receitas, use_container_width=True)
+        idx_deletar = st.number_input("Número da linha para deletar (0 é a primeira):", min_value=0, max_value=len(cf.receitas)-1, step=1)
+        if st.button("Deletar receita"):
+            cf.receitas = cf.receitas.drop(idx_deletar).reset_index(drop=True)
+            cf.salvar_dados()
+            st.success("Receita deletada!")
+            st.rerun()
+    else:
+        st.info("Nenhuma receita registrada ainda.")
+
+elif tab_view == "Investimentos":
+    st.write("**Seus Investimentos:**")
+    if len(cf.investimentos) > 0:
+        st.dataframe(cf.investimentos, use_container_width=True)
+        idx_deletar = st.number_input("Número da linha para deletar (0 é a primeira):", min_value=0, max_value=len(cf.investimentos)-1, step=1)
+        if st.button("Deletar investimento"):
+            cf.investimentos = cf.investimentos.drop(idx_deletar).reset_index(drop=True)
+            cf.salvar_dados()
+            st.success("Investimento deletado!")
+            st.rerun()
+    else:
+        st.info("Nenhum investimento registrado ainda.")
+
+elif tab_view == "Cartão":
+    st.write("**Suas Compras no Cartão:**")
+    if len(cf.cartao) > 0:
+        st.dataframe(cf.cartao, use_container_width=True)
+        idx_deletar = st.number_input("Número da linha para deletar (0 é a primeira):", min_value=0, max_value=len(cf.cartao)-1, step=1)
+        if st.button("Deletar compra"):
+            cf.cartao = cf.cartao.drop(idx_deletar).reset_index(drop=True)
+            cf.salvar_dados()
+            st.success("Compra deletada!")
+            st.rerun()
+    else:
+        st.info("Nenhuma compra no cartão registrada ainda.")
+
+st.markdown("---")
 if st.button("📊 Gerar Excel"):
     try:
         caminho = cf.exportar_para_excel()
