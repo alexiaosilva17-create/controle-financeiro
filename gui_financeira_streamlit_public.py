@@ -7,6 +7,7 @@ Execute localmente ou publique (Streamlit Community Cloud ou similar):
 
 import re
 from datetime import date
+import pandas as pd
 import streamlit as st
 from planilha_financeira import ControleFinanceiro
 
