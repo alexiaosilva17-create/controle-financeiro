@@ -154,10 +154,22 @@ with st.form("form_cartao"):
             st.error(f"Erro: {e}")
 
 st.subheader("Excel")
-if st.button("📊 Gerar/Atualizar Excel"):
+if st.button("📊 Gerar Excel"):
     try:
         caminho = cf.exportar_para_excel()
-        st.success(f"Excel criado/atualizado: {caminho}")
+        st.success("Excel gerado com sucesso!")
+        
+        # Ler o arquivo para download
+        with open(caminho, "rb") as file:
+            excel_data = file.read()
+        
+        # Botão de download
+        st.download_button(
+            label="⬇️ Baixar Excel",
+            data=excel_data,
+            file_name=f"controle_financeiro_{user_slug}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
     except Exception as e:
         st.error(f"Erro ao gerar: {e}")
 
