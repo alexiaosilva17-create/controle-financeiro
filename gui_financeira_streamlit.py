@@ -36,7 +36,7 @@ if menu == "📊 Dashboard":
     st.header("Dashboard Financeiro")
     
     # Métricas principais
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     # Calcular dados do mês atual
     mes_atual = datetime.now().strftime('%Y-%m')
@@ -45,20 +45,23 @@ if menu == "📊 Dashboard":
     total_gastos = cf.gastos['valor'].sum() if len(cf.gastos) > 0 else 0
     total_investido = cf.investimentos['valor'].sum() if len(cf.investimentos) > 0 else 0
     
-    # Fatura do mês atual apenas
+    # Fatura do cartão (mês atual e total)
     if len(cf.cartao) > 0:
         df_cartao = cf.cartao.copy()
         if 'mes_fatura' not in df_cartao.columns:
             df_cartao['vencimento_fatura'] = pd.to_datetime(df_cartao['vencimento_fatura'])
             df_cartao['mes_fatura'] = df_cartao['vencimento_fatura'].dt.strftime('%Y-%m')
         total_cartao_mes = df_cartao[df_cartao['mes_fatura'] == mes_atual]['valor'].sum()
+        total_cartao_todos = df_cartao['valor'].sum()
     else:
         total_cartao_mes = 0
+        total_cartao_todos = 0
     
-    col1.metric("💵 Receitas (Total)", f"R$ {total_receitas:,.2f}")
-    col2.metric("💸 Gastos (Total)", f"R$ {total_gastos:,.2f}")
-    col3.metric("💳 Cartão (Mês Atual)", f"R$ {total_cartao_mes:,.2f}")
-    col4.metric("📈 Investido (Total)", f"R$ {total_investido:,.2f}")
+    col1.metric("💵 Receitas", f"R$ {total_receitas:,.2f}")
+    col2.metric("💸 Gastos", f"R$ {total_gastos:,.2f}")
+    col3.metric("💳 Cartão (Mês)", f"R$ {total_cartao_mes:,.2f}")
+    col4.metric("💳 Cartão (Total)", f"R$ {total_cartao_todos:,.2f}")
+    col5.metric("📈 Investido", f"R$ {total_investido:,.2f}")
     
     # Saldo do mês atual
     st.markdown("---")
