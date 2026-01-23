@@ -128,7 +128,7 @@ if menu == "📊 Dashboard":
                    delta=f"{(rendimento_total/total_investido*100):.1f}%" if total_investido > 0 else "0%")
     
     st.markdown("---")
-
+    col_left, col_right = st.columns(2)
     
     with col_left:
         st.subheader("Gastos por Categoria")
