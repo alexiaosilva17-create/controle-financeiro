@@ -426,14 +426,15 @@ class ExportadorExcel:
         worksheet.set_column('C:D', 15)
         worksheet.set_column('E:E', 12)
         worksheet.set_column('F:F', 12)
-        worksheet.set_column('G:G', 10)
+        worksheet.set_column('G:G', 18)
+        worksheet.set_column('H:H', 10)
         
         # Título
-        worksheet.merge_range('A1:G1', 'CARTÃO DE CRÉDITO', self.fmt_titulo)
+        worksheet.merge_range('A1:H1', 'CARTÃO DE CRÉDITO', self.fmt_titulo)
         worksheet.set_row(0, 30)
         
         # Cabeçalhos
-        headers = ['Data Compra', 'Descrição', 'Valor', 'Parcelas', 'Parcela', 'Vencimento', 'Pago?']
+        headers = ['Data Compra', 'Descrição', 'Valor', 'Parcelas', 'Parcela', 'Vencimento', 'Cartão', 'Pago?']
         for col, header in enumerate(headers):
             worksheet.write(2, col, header, self.fmt_header)
         
@@ -451,19 +452,20 @@ class ExportadorExcel:
             worksheet.write(idx, 3, row_data['parcelas'], self.fmt_centro)
             worksheet.write(idx, 4, f"{row_data['parcela_atual']}/{row_data['parcelas']}", self.fmt_centro)
             worksheet.write_datetime(idx, 5, row_data['vencimento_fatura'], self.fmt_data)
+            worksheet.write(idx, 6, row_data.get('cartao', 'Cartão'), self.fmt_normal)
             
             pago_text = 'SIM' if row_data['pago'] else 'NÃO'
             fmt = self.fmt_moeda_verde if row_data['pago'] else self.fmt_moeda_vermelho
-            worksheet.write(idx, 6, pago_text, fmt)
+            worksheet.write(idx, 7, pago_text, fmt)
         
         # Total a pagar
         total_row = len(cartao_ordenado) + 3
         worksheet.write(total_row, 1, 'TOTAL EM ABERTO', self.fmt_header)
         worksheet.write_formula(total_row, 2, 
-                               f'=SUMIF(G4:G{total_row},"NÃO",C4:C{total_row})',
+                               f'=SUMIF(H4:H{total_row},"NÃO",C4:C{total_row})',
                                self.fmt_total)
         
-        worksheet.autofilter(2, 0, total_row, 6)
+        worksheet.autofilter(2, 0, total_row, 7)
     
     def _criar_aba_orcamento(self, writer, workbook):
         """Cria aba de orçamento vs realizado"""

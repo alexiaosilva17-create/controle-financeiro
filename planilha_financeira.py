@@ -38,6 +38,7 @@ class ControleFinanceiro:
         self.arquivo_investimentos = self.pasta_dados / f"{arquivo_base}_investimentos.csv"
         self.arquivo_orcamento = self.pasta_dados / f"{arquivo_base}_orcamento.csv"
         self.arquivo_cartao = self.pasta_dados / f"{arquivo_base}_cartao.csv"
+        self.arquivo_cartoes = self.pasta_dados / f"{arquivo_base}_cartoes.csv"
         self.arquivo_receitas = self.pasta_dados / f"{arquivo_base}_receitas.csv"
         
         # Carregar ou criar DataFrames
@@ -91,8 +92,21 @@ class ControleFinanceiro:
                 'parcelas': pd.Series(dtype='int64'),
                 'parcela_atual': pd.Series(dtype='int64'),
                 'vencimento_fatura': pd.Series(dtype='datetime64[ns]'),
-                'pago': pd.Series(dtype='bool')
+                'pago': pd.Series(dtype='bool'),
+                'cartao': pd.Series(dtype='str')
             })
+        if 'cartao' not in self.cartao.columns:
+            self.cartao['cartao'] = 'Cartão Principal'
+        if 'pago' not in self.cartao.columns:
+            self.cartao['pago'] = False
+
+        # Cadastro de cartões (nome + vencimento padrão)
+        if self.arquivo_cartoes.exists():
+            self.cartoes = pd.read_csv(self.arquivo_cartoes)
+        else:
+            self.cartoes = pd.DataFrame([
+                {'cartao': 'Cartão Principal', 'vencimento_dia': 10}
+            ])
         
         # Receitas
         if self.arquivo_receitas.exists():
@@ -117,6 +131,7 @@ class ControleFinanceiro:
         self.investimentos.to_csv(self.arquivo_investimentos, index=False)
         self.orcamento.to_csv(self.arquivo_orcamento, index=False)
         self.cartao.to_csv(self.arquivo_cartao, index=False)
+        self.cartoes.to_csv(self.arquivo_cartoes, index=False)
         self.receitas.to_csv(self.arquivo_receitas, index=False)
         print("✓ Dados salvos com sucesso!")
     
@@ -185,7 +200,37 @@ class ControleFinanceiro:
         print(f"✓ Investimento adicionado: R$ {valor:.2f} em {tipo} (objetivo: {objetivo})")
     
     # ========== CARTÃO DE CRÉDITO ==========
-    def adicionar_compra_cartao(self, data_compra, descricao, valor, parcelas=1, vencimento_fatura=None):
+    def definir_cartao(self, cartao, vencimento_dia=10):
+        """Cria ou atualiza um cartão com dia de vencimento padrão."""
+        vencimento_dia = int(vencimento_dia)
+        if cartao in self.cartoes['cartao'].values:
+            self.cartoes.loc[self.cartoes['cartao'] == cartao, 'vencimento_dia'] = vencimento_dia
+        else:
+            self.cartoes = pd.concat([
+                self.cartoes,
+                pd.DataFrame([{'cartao': cartao, 'vencimento_dia': vencimento_dia}])
+            ], ignore_index=True)
+        print(f"✓ Cartão configurado: {cartao} - vence dia {vencimento_dia}")
+
+    def _vencimento_para_cartao(self, cartao, data_compra, vencimento_dia=None, vencimento_fatura=None):
+        """Calcula vencimento da fatura considerando cartão e datas."""
+        if vencimento_fatura is not None:
+            return pd.to_datetime(vencimento_fatura)
+        if vencimento_dia is None:
+            reg = self.cartoes[self.cartoes['cartao'] == cartao]
+            vencimento_dia = int(reg['vencimento_dia'].iloc[0]) if not reg.empty else 10
+        vencimento_dia = int(vencimento_dia)
+        data_compra = pd.to_datetime(data_compra)
+        if data_compra.day <= vencimento_dia:
+            vencimento = data_compra.replace(day=vencimento_dia)
+        else:
+            if data_compra.month == 12:
+                vencimento = data_compra.replace(year=data_compra.year+1, month=1, day=vencimento_dia)
+            else:
+                vencimento = data_compra.replace(month=data_compra.month+1, day=vencimento_dia)
+        return vencimento
+
+    def adicionar_compra_cartao(self, data_compra, descricao, valor, parcelas=1, cartao='Cartão Principal', vencimento_dia=None, vencimento_fatura=None):
         """
         Adiciona uma compra no cartão de crédito
         
@@ -194,21 +239,13 @@ class ControleFinanceiro:
         - descricao: Descrição da compra
         - valor: Valor total
         - parcelas: Número de parcelas
-        - vencimento_fatura: Data de vencimento da fatura (se None, usa dia 10 do próximo mês)
+        - cartao: Nome do cartão (ex: Nubank, Inter, Cartão Principal)
+        - vencimento_dia: Dia de vencimento padrão do cartão (se None, usa cadastrado ou 10)
+        - vencimento_fatura: Data específica (sobrepõe vencimento_dia)
         """
         data_compra = pd.to_datetime(data_compra)
-        
-        if vencimento_fatura is None:
-            # Assume vencimento no dia 10 do próximo mês
-            if data_compra.day <= 10:
-                vencimento = data_compra.replace(day=10)
-            else:
-                if data_compra.month == 12:
-                    vencimento = data_compra.replace(year=data_compra.year+1, month=1, day=10)
-                else:
-                    vencimento = data_compra.replace(month=data_compra.month+1, day=10)
-        else:
-            vencimento = pd.to_datetime(vencimento_fatura)
+        self.definir_cartao(cartao, vencimento_dia or self.cartoes[self.cartoes['cartao'] == cartao]['vencimento_dia'].iloc[0] if cartao in self.cartoes['cartao'].values else 10)
+        vencimento = self._vencimento_para_cartao(cartao, data_compra, vencimento_dia, vencimento_fatura)
         
         valor_parcela = valor / parcelas
         
@@ -221,7 +258,8 @@ class ControleFinanceiro:
                 'parcelas': parcelas,
                 'parcela_atual': i+1,
                 'vencimento_fatura': vencimento + pd.DateOffset(months=i),
-                'pago': False
+                'pago': False,
+                'cartao': cartao
             }])
             self.cartao = pd.concat([self.cartao, nova_compra], ignore_index=True)
         
@@ -245,13 +283,15 @@ class ControleFinanceiro:
         
         print(f"✓ Compra no cartão adicionada: R$ {valor:.2f} em {parcelas}x")
     
-    def marcar_fatura_paga(self, mes, ano):
-        """Marca uma fatura como paga"""
-        mask = (self.cartao['vencimento_fatura'].dt.month == mes) & \
-               (self.cartao['vencimento_fatura'].dt.year == ano)
-        self.cartao.loc[mask, 'pago'] = True
+    def marcar_fatura_paga(self, mes, ano, cartao=None, pago=True):
+        """Marca parcelas de uma fatura como pagas ou não pagas (opcionalmente por cartão)."""
+        mask = (self.cartao['vencimento_fatura'].dt.month == mes) & (self.cartao['vencimento_fatura'].dt.year == ano)
+        if cartao:
+            mask &= (self.cartao['cartao'] == cartao)
+        self.cartao.loc[mask, 'pago'] = bool(pago)
         valor_total = self.cartao[mask]['valor'].sum()
-        print(f"✓ Fatura de {mes}/{ano} marcada como paga: R$ {valor_total:.2f}")
+        status = "paga" if pago else "não paga"
+        print(f"✓ Fatura de {mes}/{ano} ({cartao or 'todos os cartões'}) marcada como {status}: R$ {valor_total:.2f}")
     
     # ========== ORÇAMENTO ==========
     def atualizar_orcamento(self, categoria, limite_mensal):
