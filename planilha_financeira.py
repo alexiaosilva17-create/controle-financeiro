@@ -199,6 +199,39 @@ class ControleFinanceiro:
         self.investimentos = pd.concat([self.investimentos, novo_investimento], ignore_index=True)
         print(f"✓ Investimento adicionado: R$ {valor:.2f} em {tipo} (objetivo: {objetivo})")
     
+    def calcular_rendimentos(self, data_referencia=None):
+        """
+        Calcula o valor atual e rendimento de cada investimento com juros compostos.
+        
+        Retorna DataFrame com:
+        - todas as colunas originais
+        - meses_decorridos
+        - valor_atual (com juros compostos)
+        - rendimento_acumulado
+        """
+        if data_referencia is None:
+            data_referencia = datetime.now()
+        
+        if len(self.investimentos) == 0:
+            return pd.DataFrame()
+        
+        inv = self.investimentos.copy()
+        inv['data'] = pd.to_datetime(inv['data'])
+        
+        # Calcula meses desde o investimento
+        inv['meses_decorridos'] = ((data_referencia.year - inv['data'].dt.year) * 12 + 
+                                    (data_referencia.month - inv['data'].dt.month))
+        
+        # Juros compostos: valor_atual = valor * (1 + taxa/100) ^ meses
+        inv['valor_atual'] = inv.apply(
+            lambda row: row['valor'] * ((1 + row['rentabilidade_mensal'] / 100) ** row['meses_decorridos']),
+            axis=1
+        )
+        
+        inv['rendimento_acumulado'] = inv['valor_atual'] - inv['valor']
+        
+        return inv
+    
     # ========== CARTÃO DE CRÉDITO ==========
     def definir_cartao(self, cartao, vencimento_dia=10):
         """Cria ou atualiza um cartão com dia de vencimento padrão."""
@@ -230,7 +263,7 @@ class ControleFinanceiro:
                 vencimento = data_compra.replace(month=data_compra.month+1, day=vencimento_dia)
         return vencimento
 
-    def adicionar_compra_cartao(self, data_compra, descricao, valor, parcelas=1, cartao='Cartão Principal', vencimento_dia=None, vencimento_fatura=None):
+    def adicionar_compra_cartao(self, data_compra, descricao, valor, parcelas=1, cartao='Cartão Principal', vencimento_dia=None, vencimento_fatura=None, mes_fatura_ref=None):
         """
         Adiciona uma compra no cartão de crédito
         
@@ -242,22 +275,33 @@ class ControleFinanceiro:
         - cartao: Nome do cartão (ex: Nubank, Inter, Cartão Principal)
         - vencimento_dia: Dia de vencimento padrão do cartão (se None, usa cadastrado ou 10)
         - vencimento_fatura: Data específica (sobrepõe vencimento_dia)
+        - mes_fatura_ref: Data de referência do mês da fatura (ex: '2026-01-15' para fatura de janeiro)
         """
         data_compra = pd.to_datetime(data_compra)
         self.definir_cartao(cartao, vencimento_dia or self.cartoes[self.cartoes['cartao'] == cartao]['vencimento_dia'].iloc[0] if cartao in self.cartoes['cartao'].values else 10)
-        vencimento = self._vencimento_para_cartao(cartao, data_compra, vencimento_dia, vencimento_fatura)
+        
+        # Se mes_fatura_ref foi fornecido, usa ele para calcular o vencimento
+        if mes_fatura_ref is not None:
+            mes_fatura_ref = pd.to_datetime(mes_fatura_ref)
+            # Usa o mês/ano de referência com o dia de vencimento do cartão
+            venc_dia = vencimento_dia or self.cartoes[self.cartoes['cartao'] == cartao]['vencimento_dia'].iloc[0] if cartao in self.cartoes['cartao'].values else 10
+            vencimento = mes_fatura_ref.replace(day=int(venc_dia))
+        else:
+            vencimento = self._vencimento_para_cartao(cartao, data_compra, vencimento_dia, vencimento_fatura)
         
         valor_parcela = valor / parcelas
         
         # Adiciona cada parcela
         for i in range(parcelas):
+            venc_parcela = vencimento + pd.DateOffset(months=i)
             nova_compra = pd.DataFrame([{
                 'data_compra': data_compra,
                 'descricao': f"{descricao} ({i+1}/{parcelas})" if parcelas > 1 else descricao,
                 'valor': valor_parcela,
                 'parcelas': parcelas,
                 'parcela_atual': i+1,
-                'vencimento_fatura': vencimento + pd.DateOffset(months=i),
+                'vencimento_fatura': venc_parcela,
+                'mes_fatura': venc_parcela.strftime('%Y-%m'),
                 'pago': False,
                 'cartao': cartao
             }])

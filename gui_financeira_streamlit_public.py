@@ -6,7 +6,8 @@ Execute localmente ou publique (Streamlit Community Cloud ou similar):
 """
 
 import re
-from datetime import date
+from datetime import date, datetime
+from dateutil.relativedelta import relativedelta
 import pandas as pd
 import streamlit as st
 from planilha_financeira import ControleFinanceiro
@@ -21,6 +22,27 @@ def slugify(nome: str) -> str:
     nome = nome.strip().lower()
     nome = re.sub(r"[^a-z0-9_-]+", "_", nome)
     return nome or "usuario"
+
+def gerar_meses_disponiveis():
+    """Gera lista de meses: 12 meses atras ate 12 meses a frente"""
+    hoje = datetime.now()
+    meses = []
+    
+    for i in range(-12, 13):  # -12 ate +12 meses
+        mes_data = hoje + relativedelta(months=i)
+        mes_nome = mes_data.strftime('%B/%Y').capitalize()
+        # Traduzir nomes dos meses
+        traducao = {
+            'January': 'Janeiro', 'February': 'Fevereiro', 'March': 'Marco',
+            'April': 'Abril', 'May': 'Maio', 'June': 'Junho',
+            'July': 'Julho', 'August': 'Agosto', 'September': 'Setembro',
+            'October': 'Outubro', 'November': 'Novembro', 'December': 'Dezembro'
+        }
+        for ing, pt in traducao.items():
+            mes_nome = mes_nome.replace(ing, pt)
+        meses.append((mes_nome, mes_data.strftime('%Y-%m-01')))
+    
+    return meses
 
 def get_cf(user_slug: str) -> ControleFinanceiro:
     if "cf" not in st.session_state or st.session_state.get("user_slug") != user_slug:
@@ -174,10 +196,23 @@ else:
 
 with st.form("form_cartao"):
     st.subheader("Compra no cartao")
-    c_data = st.date_input("Data", value=date.today(), key="c_data")
+    c_data = st.date_input("Data da compra", value=date.today(), key="c_data")
     c_cartao = st.selectbox("Qual cartao?", cartoes_disponiveis if cartoes_disponiveis else ["Cadastre um cartao acima"], key="c_cartao")
     valor_venc = vencimento_padrao(cf, c_cartao, fallback=venc_dia)
     c_venc = st.number_input("Vencimento deste cartao (dia)", min_value=1, max_value=31, value=valor_venc, step=1, key="c_venc")
+    
+    # Gerar opcoes de meses dinamicamente
+    meses_opcoes = gerar_meses_disponiveis()
+    meses_labels = [m[0] for m in meses_opcoes]
+    mes_atual_idx = 12  # Indice do mes atual (0-12 sao passados, 12 e atual, 13-24 sao futuros)
+    
+    c_mes_fatura_label = st.selectbox("Mes da fatura", meses_labels, index=mes_atual_idx, key="c_mes_fatura", 
+                                      help="Escolha o mes em que esta compra vai entrar na fatura")
+    
+    # Converter label selecionado para data
+    idx_selecionado = meses_labels.index(c_mes_fatura_label)
+    c_mes_fatura_data = meses_opcoes[idx_selecionado][1]
+    
     c_desc = st.text_input("Descricao", key="c_desc")
     c_valor = st.number_input("Valor total (R$)", min_value=0.0, step=50.0, key="c_valor")
     c_parc = st.number_input("Numero de parcelas", min_value=1, step=1, value=1, key="c_parc")
@@ -187,7 +222,7 @@ with st.form("form_cartao"):
             st.error("Cadastre um cartao antes de lancar compras.")
         else:
             try:
-                cf.adicionar_compra_cartao(iso(c_data), c_desc, float(c_valor), int(c_parc), cartao=c_cartao, vencimento_dia=int(c_venc))
+                cf.adicionar_compra_cartao(iso(c_data), c_desc, float(c_valor), int(c_parc), cartao=c_cartao, vencimento_dia=int(c_venc), mes_fatura_ref=c_mes_fatura_data)
                 cf.salvar_dados()
                 limite = orcamento_atual(cf)
                 estouros = checar_estouro_cartao(cf, limite)
@@ -234,6 +269,29 @@ elif tab_view == "Investimentos":
     st.write("**Seus Investimentos:**")
     if len(cf.investimentos) > 0:
         st.dataframe(cf.investimentos, use_container_width=True)
+        
+        # Calcular e mostrar rendimentos
+        st.markdown("---")
+        st.subheader("💰 Rendimentos Acumulados")
+        rendimentos = cf.calcular_rendimentos()
+        if len(rendimentos) > 0:
+            # Mostrar tabela com rendimentos
+            cols_mostrar = ['data', 'tipo', 'objetivo', 'valor', 'rentabilidade_mensal', 
+                           'meses_decorridos', 'valor_atual', 'rendimento_acumulado']
+            st.dataframe(rendimentos[cols_mostrar].round(2), use_container_width=True)
+            
+            # Resumo total
+            total_investido = rendimentos['valor'].sum()
+            total_atual = rendimentos['valor_atual'].sum()
+            total_rendimento = rendimentos['rendimento_acumulado'].sum()
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Investido", f"R$ {total_investido:,.2f}")
+            col2.metric("Valor Atual", f"R$ {total_atual:,.2f}")
+            col3.metric("Rendimento Total", f"R$ {total_rendimento:,.2f}", 
+                       delta=f"{(total_rendimento/total_investido*100):.1f}%" if total_investido > 0 else "0%")
+        
+        st.markdown("---")
         idx_deletar = st.number_input("Numero da linha para deletar (0 e a primeira):", min_value=0, max_value=len(cf.investimentos)-1, step=1)
         if st.button("Deletar investimento"):
             cf.investimentos = cf.investimentos.drop(idx_deletar).reset_index(drop=True)
