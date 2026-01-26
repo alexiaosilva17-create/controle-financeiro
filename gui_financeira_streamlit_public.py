@@ -149,6 +149,57 @@ if menu == "📊 Dashboard":
             st.info("Nenhum investimento registrado.")
     
     st.markdown("---")
+    st.subheader("Evolucao Mensal")
+    if len(cf.receitas) > 0 or len(cf.gastos) > 0 or len(cf.cartao) > 0:
+        # Receitas por mes
+        df_rec = cf.receitas.copy() if len(cf.receitas) > 0 else pd.DataFrame()
+        if len(df_rec) > 0:
+            df_rec['data'] = pd.to_datetime(df_rec['data'])
+            df_rec['mes'] = df_rec['data'].dt.to_period('M').astype(str)
+            rec_mes = df_rec.groupby('mes')['valor'].sum()
+        else:
+            rec_mes = pd.Series(dtype=float)
+        
+        # Gastos por mes
+        df_gas = cf.gastos.copy() if len(cf.gastos) > 0 else pd.DataFrame()
+        if len(df_gas) > 0:
+            df_gas['data'] = pd.to_datetime(df_gas['data'])
+            df_gas['mes'] = df_gas['data'].dt.to_period('M').astype(str)
+            gas_mes = df_gas.groupby('mes')['valor'].sum()
+        else:
+            gas_mes = pd.Series(dtype=float)
+        
+        # Cartao de credito por mes
+        if len(cf.cartao) > 0:
+            df_cartao = cf.cartao.copy()
+            df_cartao['vencimento_fatura'] = pd.to_datetime(df_cartao['vencimento_fatura'])
+            if 'mes_fatura' not in df_cartao.columns:
+                df_cartao['mes_fatura'] = df_cartao['vencimento_fatura'].dt.strftime('%Y-%m')
+            cart_mes = df_cartao.groupby('mes_fatura')['valor'].sum()
+            cart_mes.index.name = 'mes'
+        else:
+            cart_mes = pd.Series(dtype=float)
+        
+        # Combinar
+        df_evo = pd.DataFrame({
+            'Receitas': rec_mes,
+            'Gastos': gas_mes,
+            'Cartao': cart_mes
+        }).fillna(0).reset_index()
+        df_evo.columns = ['Mes', 'Receitas', 'Gastos', 'Cartao']
+        
+        # Criar coluna "Gastos + Cartao" para visualizacao
+        df_evo['Gastos + Cartao'] = df_evo['Gastos'] + df_evo['Cartao']
+        
+        fig = go.Figure()
+        fig.add_trace(go.Bar(x=df_evo['Mes'], y=df_evo['Receitas'], name='Receitas', marker_color='green'))
+        fig.add_trace(go.Bar(x=df_evo['Mes'], y=df_evo['Gastos + Cartao'], name='Gastos + Cartao', marker_color='red'))
+        fig.update_layout(barmode='group', title='Receitas vs Gastos + Cartao de Credito por Mes')
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Adicione receitas ou gastos para ver a evolucao mensal.")
+    
+    st.markdown("---")
     st.subheader("Faturas Pendentes")
     if len(cf.cartao) > 0:
         df_pendentes = cf.cartao[cf.cartao['pago'] == False].copy()
