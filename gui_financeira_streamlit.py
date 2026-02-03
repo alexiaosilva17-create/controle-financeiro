@@ -19,17 +19,51 @@ cf = st.session_state.cf
 def iso(d):
     return d.isoformat() if hasattr(d, "isoformat") else str(d)
 
+def gerar_lista_meses(qtd=24):
+    """Gera lista de meses (YYYY-MM) a partir do mês atual"""
+    meses = []
+    base = datetime.now().replace(day=1)
+    for i in range(qtd):
+        meses.append(base.strftime('%Y-%m'))
+        base = base - relativedelta(months=1)
+    return meses
+
+def formatar_mes(m):
+    try:
+        return datetime.strptime(m, '%Y-%m').strftime('%m/%Y')
+    except Exception:
+        return m
+
+def mes_para_data(m):
+    try:
+        return datetime.strptime(m, '%Y-%m').date()
+    except Exception:
+        return date.today()
+
 st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="wide")
 st.title("💰 Controle Financeiro")
 
 # Menu lateral
 menu = st.sidebar.selectbox(
     "Menu",
-    ["📊 Dashboard", "➕ Adicionar Dados", "📋 Visualizar e Editar", "💳 Faturas do Cartão", "📈 Excel"]
+    ["📊 Dashboard", "📅 Meses Anteriores", "➕ Adicionar Dados", "📋 Visualizar e Editar", "💳 Faturas do Cartão", "📈 Excel"]
 )
 
 st.sidebar.markdown("---")
 st.sidebar.caption("💡 Sistema completo de controle financeiro")
+st.sidebar.markdown("---")
+
+# Seleção de mês de referência
+meses_opcoes = gerar_lista_meses(36)
+if "mes_referencia" not in st.session_state:
+    st.session_state.mes_referencia = meses_opcoes[0]
+
+st.session_state.mes_referencia = st.sidebar.selectbox(
+    "Mês de referência",
+    meses_opcoes,
+    index=meses_opcoes.index(st.session_state.mes_referencia) if st.session_state.mes_referencia in meses_opcoes else 0,
+    format_func=formatar_mes
+)
 
 # ========== DASHBOARD ==========
 if menu == "📊 Dashboard":
@@ -38,12 +72,32 @@ if menu == "📊 Dashboard":
     # Métricas principais
     col1, col2, col3, col4, col5 = st.columns(5)
     
-    # Calcular dados do mês atual
-    mes_atual = datetime.now().strftime('%Y-%m')
+    # Calcular dados do mês selecionado
+    mes_ref = st.session_state.mes_referencia
     
-    total_receitas = cf.receitas['valor'].sum() if len(cf.receitas) > 0 else 0
-    total_gastos = cf.gastos['valor'].sum() if len(cf.gastos) > 0 else 0
-    total_investido = cf.investimentos['valor'].sum() if len(cf.investimentos) > 0 else 0
+    if len(cf.receitas) > 0:
+        df_rec_mes = cf.receitas.copy()
+        df_rec_mes['data'] = pd.to_datetime(df_rec_mes['data'])
+        df_rec_mes['mes'] = df_rec_mes['data'].dt.strftime('%Y-%m')
+        total_receitas = df_rec_mes[df_rec_mes['mes'] == mes_ref]['valor'].sum()
+    else:
+        total_receitas = 0
+    
+    if len(cf.gastos) > 0:
+        df_gas_mes = cf.gastos.copy()
+        df_gas_mes['data'] = pd.to_datetime(df_gas_mes['data'])
+        df_gas_mes['mes'] = df_gas_mes['data'].dt.strftime('%Y-%m')
+        total_gastos = df_gas_mes[df_gas_mes['mes'] == mes_ref]['valor'].sum()
+    else:
+        total_gastos = 0
+    
+    if len(cf.investimentos) > 0:
+        df_inv_mes = cf.investimentos.copy()
+        df_inv_mes['data'] = pd.to_datetime(df_inv_mes['data'])
+        df_inv_mes['mes'] = df_inv_mes['data'].dt.strftime('%Y-%m')
+        total_investido = df_inv_mes[df_inv_mes['mes'] == mes_ref]['valor'].sum()
+    else:
+        total_investido = 0
     
     # Fatura do cartão (mês atual e total)
     if len(cf.cartao) > 0:
@@ -51,7 +105,7 @@ if menu == "📊 Dashboard":
         if 'mes_fatura' not in df_cartao.columns:
             df_cartao['vencimento_fatura'] = pd.to_datetime(df_cartao['vencimento_fatura'])
             df_cartao['mes_fatura'] = df_cartao['vencimento_fatura'].dt.strftime('%Y-%m')
-        total_cartao_mes = df_cartao[df_cartao['mes_fatura'] == mes_atual]['valor'].sum()
+        total_cartao_mes = df_cartao[df_cartao['mes_fatura'] == mes_ref]['valor'].sum()
         total_cartao_todos = df_cartao['valor'].sum()
     else:
         total_cartao_mes = 0
@@ -61,13 +115,13 @@ if menu == "📊 Dashboard":
     col2.metric("💸 Gastos", f"R$ {total_gastos:,.2f}")
     col3.metric("💳 Cartão (Mês)", f"R$ {total_cartao_mes:,.2f}")
     col4.metric("💳 Cartão (Total)", f"R$ {total_cartao_todos:,.2f}")
-    col5.metric("📈 Investido", f"R$ {total_investido:,.2f}")
+    col5.metric("📈 Investido (Mês)", f"R$ {total_investido:,.2f}")
     
-    # Saldo do mês atual
+    # Saldo do mês selecionado
     st.markdown("---")
     col1, col2, col3 = st.columns(3)
     saldo_mes_atual = total_receitas - total_gastos - total_cartao_mes
-    col1.metric("💰 Saldo do Mês Atual", f"R$ {saldo_mes_atual:,.2f}", 
+    col1.metric("💰 Saldo do Mês", f"R$ {saldo_mes_atual:,.2f}", 
                 delta=f"{'Positivo' if saldo_mes_atual >= 0 else 'Negativo'}")
     
     # Rendimentos
@@ -178,6 +232,111 @@ if menu == "📊 Dashboard":
     else:
         st.info("Nenhuma compra no cartão registrada ainda.")
 
+# ========== MESES ANTERIORES ==========
+elif menu == "📅 Meses Anteriores":
+    st.header("Meses Anteriores")
+    
+    # Preparar dados mensais
+    def _serie_mensal(df, coluna_data, coluna_valor):
+        if len(df) == 0:
+            return pd.Series(dtype=float)
+        tmp = df.copy()
+        tmp[coluna_data] = pd.to_datetime(tmp[coluna_data])
+        tmp['mes'] = tmp[coluna_data].dt.strftime('%Y-%m')
+        return tmp.groupby('mes')[coluna_valor].sum()
+    
+    rec_mes = _serie_mensal(cf.receitas, 'data', 'valor')
+    gas_mes = _serie_mensal(cf.gastos, 'data', 'valor')
+    inv_mes = _serie_mensal(cf.investimentos, 'data', 'valor')
+    
+    if len(cf.cartao) > 0:
+        df_cartao = cf.cartao.copy()
+        df_cartao['vencimento_fatura'] = pd.to_datetime(df_cartao['vencimento_fatura'])
+        if 'mes_fatura' not in df_cartao.columns:
+            df_cartao['mes_fatura'] = df_cartao['vencimento_fatura'].dt.strftime('%Y-%m')
+        cart_mes = df_cartao.groupby('mes_fatura')['valor'].sum()
+        cart_mes.index.name = 'mes'
+    else:
+        cart_mes = pd.Series(dtype=float)
+    
+    df_hist = pd.DataFrame({
+        'Receitas': rec_mes,
+        'Gastos': gas_mes,
+        'Cartão': cart_mes,
+        'Investimentos': inv_mes
+    }).fillna(0).reset_index()
+    df_hist.columns = ['Mês', 'Receitas', 'Gastos', 'Cartão', 'Investimentos']
+    df_hist['Saldo'] = df_hist['Receitas'] - df_hist['Gastos'] - df_hist['Cartão']
+    
+    if len(df_hist) == 0:
+        st.info("Sem dados suficientes para mostrar histórico mensal.")
+    else:
+        st.subheader("Resumo por mês")
+        df_hist_show = df_hist.copy()
+        df_hist_show['Mês'] = df_hist_show['Mês'].apply(formatar_mes)
+        for col in ['Receitas', 'Gastos', 'Cartão', 'Investimentos', 'Saldo']:
+            df_hist_show[col] = df_hist_show[col].apply(lambda x: f"R$ {x:,.2f}")
+        st.dataframe(df_hist_show, use_container_width=True, hide_index=True)
+        
+        st.markdown("---")
+        st.subheader("Detalhes do mês")
+        mes_sel = st.selectbox(
+            "Escolha o mês",
+            options=sorted(df_hist['Mês'].unique(), reverse=True),
+            format_func=formatar_mes
+        )
+        
+        # Receitas do mês
+        st.write("### 💵 Receitas")
+        if len(cf.receitas) > 0:
+            df_r = cf.receitas.copy()
+            df_r['data'] = pd.to_datetime(df_r['data'])
+            df_r['mes'] = df_r['data'].dt.strftime('%Y-%m')
+            df_r = df_r[df_r['mes'] == mes_sel]
+            if len(df_r) > 0:
+                df_r_show = df_r[['data', 'fonte', 'valor', 'tipo']].copy()
+                df_r_show['data'] = df_r_show['data'].dt.strftime('%d/%m/%Y')
+                df_r_show['valor'] = df_r_show['valor'].apply(lambda x: f"R$ {x:,.2f}")
+                st.dataframe(df_r_show, use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhuma receita neste mês.")
+        else:
+            st.info("Nenhuma receita cadastrada.")
+        
+        # Gastos do mês
+        st.write("### 💸 Gastos")
+        if len(cf.gastos) > 0:
+            df_g = cf.gastos.copy()
+            df_g['data'] = pd.to_datetime(df_g['data'])
+            df_g['mes'] = df_g['data'].dt.strftime('%Y-%m')
+            df_g = df_g[df_g['mes'] == mes_sel]
+            if len(df_g) > 0:
+                df_g_show = df_g[['data', 'categoria', 'descricao', 'valor', 'forma_pagamento']].copy()
+                df_g_show['data'] = df_g_show['data'].dt.strftime('%d/%m/%Y')
+                df_g_show['valor'] = df_g_show['valor'].apply(lambda x: f"R$ {x:,.2f}")
+                st.dataframe(df_g_show, use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhum gasto neste mês.")
+        else:
+            st.info("Nenhum gasto cadastrado.")
+        
+        # Cartão do mês
+        st.write("### 💳 Cartão")
+        if len(cf.cartao) > 0:
+            df_c = cf.cartao.copy()
+            df_c['vencimento_fatura'] = pd.to_datetime(df_c['vencimento_fatura'])
+            df_c['mes_fatura'] = df_c['vencimento_fatura'].dt.strftime('%Y-%m')
+            df_c = df_c[df_c['mes_fatura'] == mes_sel]
+            if len(df_c) > 0:
+                df_c_show = df_c[['data_compra', 'descricao', 'valor', 'parcela_atual', 'parcelas', 'pago', 'cartao']].copy()
+                df_c_show['data_compra'] = pd.to_datetime(df_c_show['data_compra']).dt.strftime('%d/%m/%Y')
+                df_c_show['valor'] = df_c_show['valor'].apply(lambda x: f"R$ {x:,.2f}")
+                st.dataframe(df_c_show, use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhuma compra no cartão neste mês.")
+        else:
+            st.info("Nenhuma compra no cartão cadastrada.")
+
 # ========== ADICIONAR DADOS ==========
 elif menu == "➕ Adicionar Dados":
     st.header("Adicionar Novos Registros")
@@ -188,10 +347,15 @@ elif menu == "➕ Adicionar Dados":
         r_desc = st.text_input("Descrição")
         r_valor = st.number_input("Valor (R$)", min_value=0.0, step=50.0)
         r_tipo = st.selectbox("Tipo", ["Salário", "Freelance", "Investimento", "Outros"])
+        r_comp = st.checkbox("Definir mês de competência (como fatura)")
+        r_mes = None
+        if r_comp:
+            r_mes = st.selectbox("Mês de competência", gerar_lista_meses(24), format_func=formatar_mes)
         submit = st.form_submit_button("Adicionar receita")
         if submit:
             try:
-                cf.adicionar_receita(iso(r_data), r_desc, float(r_valor), r_tipo)
+                data_final = mes_para_data(r_mes) if r_mes else r_data
+                cf.adicionar_receita(iso(data_final), r_desc, float(r_valor), r_tipo)
                 cf.salvar_dados()
                 st.success("Receita adicionada e salva!")
             except Exception as e:
@@ -204,10 +368,15 @@ elif menu == "➕ Adicionar Dados":
         g_desc = st.text_input("Descrição", key="g_desc")
         g_valor = st.number_input("Valor (R$)", min_value=0.0, step=20.0, key="g_valor")
         g_pg = st.selectbox("Forma de pagamento", ["Débito", "Crédito", "PIX", "Dinheiro"], key="g_pg")
+        g_comp = st.checkbox("Definir mês de competência (como fatura)", key="g_comp")
+        g_mes = None
+        if g_comp:
+            g_mes = st.selectbox("Mês de competência", gerar_lista_meses(24), format_func=formatar_mes, key="g_mes")
         submit_g = st.form_submit_button("Adicionar gasto")
         if submit_g:
             try:
-                cf.adicionar_gasto(iso(g_data), g_cat, g_desc, float(g_valor), g_pg)
+                data_final = mes_para_data(g_mes) if g_mes else g_data
+                cf.adicionar_gasto(iso(data_final), g_cat, g_desc, float(g_valor), g_pg)
                 cf.salvar_dados()
                 st.success("Gasto adicionado e salvo!")
             except Exception as e:

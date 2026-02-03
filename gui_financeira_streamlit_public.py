@@ -8,6 +8,8 @@ Execute localmente ou publique (Streamlit Community Cloud ou similar):
 """
 
 import re
+import zipfile
+from io import BytesIO
 from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 import pandas as pd
@@ -51,6 +53,68 @@ def get_cf(user_slug: str) -> ControleFinanceiro:
 def iso(d):
     return d.isoformat() if hasattr(d, "isoformat") else str(d)
 
+def user_files(user_slug: str):
+    base = f"{user_slug}"
+    pasta = "dados_financeiros"
+    return {
+        "gastos": f"{pasta}/{base}_gastos.csv",
+        "receitas": f"{pasta}/{base}_receitas.csv",
+        "investimentos": f"{pasta}/{base}_investimentos.csv",
+        "orcamento": f"{pasta}/{base}_orcamento.csv",
+        "cartao": f"{pasta}/{base}_cartao.csv",
+        "cartoes": f"{pasta}/{base}_cartoes.csv",
+    }
+
+def backup_zip_bytes(user_slug: str):
+    files = user_files(user_slug)
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for key, path in files.items():
+            try:
+                with open(path, "rb") as f:
+                    zf.writestr(f"{user_slug}_{key}.csv", f.read())
+            except FileNotFoundError:
+                continue
+    buffer.seek(0)
+    return buffer.getvalue()
+
+def restore_from_zip(user_slug: str, uploaded_zip):
+    files = user_files(user_slug)
+    if not uploaded_zip:
+        return False, "Arquivo não encontrado."
+    try:
+        data = uploaded_zip.read()
+        with zipfile.ZipFile(BytesIO(data), "r") as zf:
+            for key, path in files.items():
+                nome = f"{user_slug}_{key}.csv"
+                if nome in zf.namelist():
+                    with zf.open(nome) as src, open(path, "wb") as dst:
+                        dst.write(src.read())
+        return True, "Backup restaurado com sucesso."
+    except Exception as e:
+        return False, f"Erro ao restaurar backup: {e}"
+
+def gerar_lista_meses(qtd=36):
+    """Gera lista de meses (YYYY-MM) a partir do mês atual"""
+    meses = []
+    base = datetime.now().replace(day=1)
+    for i in range(qtd):
+        meses.append(base.strftime('%Y-%m'))
+        base = base - relativedelta(months=1)
+    return meses
+
+def formatar_mes(m):
+    try:
+        return datetime.strptime(m, '%Y-%m').strftime('%m/%Y')
+    except Exception:
+        return m
+
+def mes_para_data(m):
+    try:
+        return datetime.strptime(m, '%Y-%m').date()
+    except Exception:
+        return date.today()
+
 # Login
 st.title("💳 Controle Financeiro")
 
@@ -76,25 +140,90 @@ with st.sidebar:
             st.stop()
     
     st.markdown("---")
-    menu = st.selectbox("Menu", ["📊 Dashboard", "➕ Adicionar Dados", "📋 Visualizar e Editar", "💳 Faturas"])
+    menu = st.selectbox("Menu", ["📊 Dashboard", "📅 Meses Anteriores", "➕ Adicionar Dados", "📋 Visualizar e Editar", "💳 Faturas"])
     st.markdown("---")
     st.caption("💡 Sistema financeiro completo")
+    st.markdown("---")
+
+    # Seleção de mês de referência
+    meses_opcoes = gerar_lista_meses(36)
+    if "mes_referencia" not in st.session_state:
+        st.session_state.mes_referencia = meses_opcoes[0]
+
+    st.session_state.mes_referencia = st.selectbox(
+        "Mês de referência",
+        meses_opcoes,
+        index=meses_opcoes.index(st.session_state.mes_referencia) if st.session_state.mes_referencia in meses_opcoes else 0,
+        format_func=formatar_mes
+    )
+
+    st.markdown("---")
+    st.subheader("🔒 Backup do usuário")
+
+    # Download de backup
+    backup_bytes = backup_zip_bytes(user_slug)
+    if backup_bytes:
+        nome_backup = f"backup_{user_slug}_{datetime.now().strftime('%Y%m%d_%H%M')}.zip"
+        st.download_button(
+            "⬇️ Baixar backup",
+            data=backup_bytes,
+            file_name=nome_backup,
+            mime="application/zip",
+            use_container_width=True
+        )
+    else:
+        st.info("Ainda não há dados para backup.")
+
+    # Upload de backup
+    up = st.file_uploader("Restaurar backup (ZIP)", type=["zip"], key="backup_zip")
+    if up and st.button("Restaurar agora", use_container_width=True):
+        ok, msg = restore_from_zip(user_slug, up)
+        if ok:
+            st.success(msg)
+            st.rerun()
+        else:
+            st.error(msg)
 
 # Dashboard
 if menu == "📊 Dashboard":
     st.header("Dashboard Financeiro")
+    
+    # Aviso se não houver dados do usuário
+    sem_dados = (len(cf.receitas) == 0 and len(cf.gastos) == 0 and len(cf.cartao) == 0 and len(cf.investimentos) == 0)
+    if sem_dados:
+        st.warning("Nenhum dado encontrado para este usuário. Use o backup no menu lateral para restaurar.")
     
     col1, col2, col3, col4 = st.columns(4)
     total_receitas = cf.receitas['valor'].sum() if len(cf.receitas) > 0 else 0
     total_gastos = cf.gastos['valor'].sum() if len(cf.gastos) > 0 else 0
     col1, col2, col3, col4, col5 = st.columns(5)
     
-    # Calcular dados do mes atual
-    mes_atual = datetime.now().strftime('%Y-%m')
+    # Calcular dados do mês selecionado
+    mes_ref = st.session_state.mes_referencia
     
-    total_receitas = cf.receitas['valor'].sum() if len(cf.receitas) > 0 else 0
-    total_gastos = cf.gastos['valor'].sum() if len(cf.gastos) > 0 else 0
-    total_investido = cf.investimentos['valor'].sum() if len(cf.investimentos) > 0 else 0
+    if len(cf.receitas) > 0:
+        df_rec_mes = cf.receitas.copy()
+        df_rec_mes['data'] = pd.to_datetime(df_rec_mes['data'])
+        df_rec_mes['mes'] = df_rec_mes['data'].dt.strftime('%Y-%m')
+        total_receitas = df_rec_mes[df_rec_mes['mes'] == mes_ref]['valor'].sum()
+    else:
+        total_receitas = 0
+    
+    if len(cf.gastos) > 0:
+        df_gas_mes = cf.gastos.copy()
+        df_gas_mes['data'] = pd.to_datetime(df_gas_mes['data'])
+        df_gas_mes['mes'] = df_gas_mes['data'].dt.strftime('%Y-%m')
+        total_gastos = df_gas_mes[df_gas_mes['mes'] == mes_ref]['valor'].sum()
+    else:
+        total_gastos = 0
+    
+    if len(cf.investimentos) > 0:
+        df_inv_mes = cf.investimentos.copy()
+        df_inv_mes['data'] = pd.to_datetime(df_inv_mes['data'])
+        df_inv_mes['mes'] = df_inv_mes['data'].dt.strftime('%Y-%m')
+        total_investido = df_inv_mes[df_inv_mes['mes'] == mes_ref]['valor'].sum()
+    else:
+        total_investido = 0
     
     # Fatura do mes atual e total
     if len(cf.cartao) > 0:
@@ -102,7 +231,7 @@ if menu == "📊 Dashboard":
         if 'mes_fatura' not in df_cartao.columns:
             df_cartao['vencimento_fatura'] = pd.to_datetime(df_cartao['vencimento_fatura'])
             df_cartao['mes_fatura'] = df_cartao['vencimento_fatura'].dt.strftime('%Y-%m')
-        total_cartao_mes = df_cartao[df_cartao['mes_fatura'] == mes_atual]['valor'].sum()
+        total_cartao_mes = df_cartao[df_cartao['mes_fatura'] == mes_ref]['valor'].sum()
         total_cartao_todos = df_cartao['valor'].sum()
     else:
         total_cartao_mes = 0
@@ -112,12 +241,12 @@ if menu == "📊 Dashboard":
     col2.metric("Gastos", f"R$ {total_gastos:,.2f}")
     col3.metric("Cartao (Mes)", f"R$ {total_cartao_mes:,.2f}")
     col4.metric("Cartao (Total)", f"R$ {total_cartao_todos:,.2f}")
-    col5.metric("Investido", f"R$ {total_investido:,.2f}")
+    col5.metric("Investido (Mês)", f"R$ {total_investido:,.2f}")
     
     st.markdown("---")
     col1, col2, col3 = st.columns(3)
     saldo = total_receitas - total_gastos - total_cartao_mes
-    col1.metric("Saldo do Mes Atual", f"R$ {saldo:,.2f}", delta="Positivo" if saldo >= 0 else "Negativo")
+    col1.metric("Saldo do Mês", f"R$ {saldo:,.2f}", delta="Positivo" if saldo >= 0 else "Negativo")
     
     if len(cf.investimentos) > 0:
         rendimentos = cf.calcular_rendimentos()
@@ -216,6 +345,107 @@ if menu == "📊 Dashboard":
     else:
         st.info("Nenhuma compra no cartao registrada.")
 
+# Meses Anteriores
+elif menu == "📅 Meses Anteriores":
+    st.header("Meses Anteriores")
+    
+    def _serie_mensal(df, coluna_data, coluna_valor):
+        if len(df) == 0:
+            return pd.Series(dtype=float)
+        tmp = df.copy()
+        tmp[coluna_data] = pd.to_datetime(tmp[coluna_data])
+        tmp['mes'] = tmp[coluna_data].dt.strftime('%Y-%m')
+        return tmp.groupby('mes')[coluna_valor].sum()
+    
+    rec_mes = _serie_mensal(cf.receitas, 'data', 'valor')
+    gas_mes = _serie_mensal(cf.gastos, 'data', 'valor')
+    inv_mes = _serie_mensal(cf.investimentos, 'data', 'valor')
+    
+    if len(cf.cartao) > 0:
+        df_cartao = cf.cartao.copy()
+        df_cartao['vencimento_fatura'] = pd.to_datetime(df_cartao['vencimento_fatura'])
+        if 'mes_fatura' not in df_cartao.columns:
+            df_cartao['mes_fatura'] = df_cartao['vencimento_fatura'].dt.strftime('%Y-%m')
+        cart_mes = df_cartao.groupby('mes_fatura')['valor'].sum()
+        cart_mes.index.name = 'mes'
+    else:
+        cart_mes = pd.Series(dtype=float)
+    
+    df_hist = pd.DataFrame({
+        'Receitas': rec_mes,
+        'Gastos': gas_mes,
+        'Cartao': cart_mes,
+        'Investimentos': inv_mes
+    }).fillna(0).reset_index()
+    df_hist.columns = ['Mes', 'Receitas', 'Gastos', 'Cartao', 'Investimentos']
+    df_hist['Saldo'] = df_hist['Receitas'] - df_hist['Gastos'] - df_hist['Cartao']
+    
+    if len(df_hist) == 0:
+        st.info("Sem dados suficientes para mostrar historico mensal.")
+    else:
+        st.subheader("Resumo por mes")
+        df_hist_show = df_hist.copy()
+        df_hist_show['Mes'] = df_hist_show['Mes'].apply(formatar_mes)
+        for col in ['Receitas', 'Gastos', 'Cartao', 'Investimentos', 'Saldo']:
+            df_hist_show[col] = df_hist_show[col].apply(lambda x: f"R$ {x:,.2f}")
+        st.dataframe(df_hist_show, use_container_width=True, hide_index=True)
+        
+        st.markdown("---")
+        st.subheader("Detalhes do mes")
+        mes_sel = st.selectbox(
+            "Escolha o mes",
+            options=sorted(df_hist['Mes'].unique(), reverse=True),
+            format_func=formatar_mes
+        )
+        
+        st.write("### Receitas")
+        if len(cf.receitas) > 0:
+            df_r = cf.receitas.copy()
+            df_r['data'] = pd.to_datetime(df_r['data'])
+            df_r['mes'] = df_r['data'].dt.strftime('%Y-%m')
+            df_r = df_r[df_r['mes'] == mes_sel]
+            if len(df_r) > 0:
+                df_r_show = df_r[['data', 'fonte', 'valor', 'tipo']].copy()
+                df_r_show['data'] = df_r_show['data'].dt.strftime('%d/%m/%Y')
+                df_r_show['valor'] = df_r_show['valor'].apply(lambda x: f"R$ {x:,.2f}")
+                st.dataframe(df_r_show, use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhuma receita neste mes.")
+        else:
+            st.info("Nenhuma receita cadastrada.")
+        
+        st.write("### Gastos")
+        if len(cf.gastos) > 0:
+            df_g = cf.gastos.copy()
+            df_g['data'] = pd.to_datetime(df_g['data'])
+            df_g['mes'] = df_g['data'].dt.strftime('%Y-%m')
+            df_g = df_g[df_g['mes'] == mes_sel]
+            if len(df_g) > 0:
+                df_g_show = df_g[['data', 'categoria', 'descricao', 'valor', 'forma_pagamento']].copy()
+                df_g_show['data'] = df_g_show['data'].dt.strftime('%d/%m/%Y')
+                df_g_show['valor'] = df_g_show['valor'].apply(lambda x: f"R$ {x:,.2f}")
+                st.dataframe(df_g_show, use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhum gasto neste mes.")
+        else:
+            st.info("Nenhum gasto cadastrado.")
+        
+        st.write("### Cartao")
+        if len(cf.cartao) > 0:
+            df_c = cf.cartao.copy()
+            df_c['vencimento_fatura'] = pd.to_datetime(df_c['vencimento_fatura'])
+            df_c['mes_fatura'] = df_c['vencimento_fatura'].dt.strftime('%Y-%m')
+            df_c = df_c[df_c['mes_fatura'] == mes_sel]
+            if len(df_c) > 0:
+                df_c_show = df_c[['data_compra', 'descricao', 'valor', 'parcela_atual', 'parcelas', 'pago', 'cartao']].copy()
+                df_c_show['data_compra'] = pd.to_datetime(df_c_show['data_compra']).dt.strftime('%d/%m/%Y')
+                df_c_show['valor'] = df_c_show['valor'].apply(lambda x: f"R$ {x:,.2f}")
+                st.dataframe(df_c_show, use_container_width=True, hide_index=True)
+            else:
+                st.info("Nenhuma compra no cartao neste mes.")
+        else:
+            st.info("Nenhuma compra no cartao cadastrada.")
+
 # Adicionar Dados
 elif menu == "➕ Adicionar Dados":
     st.header("Adicionar Novos Registros")
@@ -226,10 +456,15 @@ elif menu == "➕ Adicionar Dados":
         r_desc = st.text_input("Descricao")
         r_valor = st.number_input("Valor (R$)", min_value=0.0, step=50.0)
         r_tipo = st.selectbox("Tipo", ["Salario", "Freelance", "Investimento", "Outros"])
+        r_comp = st.checkbox("Definir mes de competencia (como fatura)")
+        r_mes = None
+        if r_comp:
+            r_mes = st.selectbox("Mes de competencia", gerar_lista_meses(24), format_func=formatar_mes)
         submit = st.form_submit_button("Adicionar receita")
         if submit:
             try:
-                cf.adicionar_receita(iso(r_data), r_desc, float(r_valor), r_tipo)
+                data_final = mes_para_data(r_mes) if r_mes else r_data
+                cf.adicionar_receita(iso(data_final), r_desc, float(r_valor), r_tipo)
                 cf.salvar_dados()
                 st.success("Receita adicionada!")
             except Exception as e:
@@ -242,10 +477,15 @@ elif menu == "➕ Adicionar Dados":
         g_desc = st.text_input("Descricao", key="g_desc")
         g_valor = st.number_input("Valor (R$)", min_value=0.0, step=20.0, key="g_valor")
         g_pg = st.selectbox("Pagamento", ["Debito", "Credito", "PIX", "Dinheiro"], key="g_pg")
+        g_comp = st.checkbox("Definir mes de competencia (como fatura)", key="g_comp")
+        g_mes = None
+        if g_comp:
+            g_mes = st.selectbox("Mes de competencia", gerar_lista_meses(24), format_func=formatar_mes, key="g_mes")
         submit_g = st.form_submit_button("Adicionar gasto")
         if submit_g:
             try:
-                cf.adicionar_gasto(iso(g_data), g_cat, g_desc, float(g_valor), g_pg)
+                data_final = mes_para_data(g_mes) if g_mes else g_data
+                cf.adicionar_gasto(iso(data_final), g_cat, g_desc, float(g_valor), g_pg)
                 cf.salvar_dados()
                 st.success("Gasto adicionado!")
             except Exception as e:
