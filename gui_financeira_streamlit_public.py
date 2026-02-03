@@ -454,7 +454,7 @@ elif menu == "➕ Adicionar Dados":
         st.subheader("Receitas")
         r_data = st.date_input("Data", value=date.today())
         r_desc = st.text_input("Descricao")
-        r_valor = st.number_input("Valor (R$)", min_value=0.0, step=50.0)
+        r_valor = st.number_input("Valor (R$)", min_value=0.0, step=50.0, value=None, placeholder="Ex: 2500")
         r_tipo = st.selectbox("Tipo", ["Salario", "Freelance", "Investimento", "Outros"])
         r_comp = st.checkbox("Definir mes de competencia (como fatura)")
         r_mes = None
@@ -463,10 +463,13 @@ elif menu == "➕ Adicionar Dados":
         submit = st.form_submit_button("Adicionar receita")
         if submit:
             try:
-                data_final = mes_para_data(r_mes) if r_mes else r_data
-                cf.adicionar_receita(iso(data_final), r_desc, float(r_valor), r_tipo)
-                cf.salvar_dados()
-                st.success("Receita adicionada!")
+                if r_valor is None:
+                    st.error("Informe o valor da receita.")
+                else:
+                    data_final = mes_para_data(r_mes) if r_mes else r_data
+                    cf.adicionar_receita(iso(data_final), r_desc, float(r_valor), r_tipo)
+                    cf.salvar_dados()
+                    st.success("Receita adicionada!")
             except Exception as e:
                 st.error(f"Erro: {e}")
     
@@ -475,7 +478,7 @@ elif menu == "➕ Adicionar Dados":
         g_data = st.date_input("Data", value=date.today(), key="g_data")
         g_cat = st.selectbox("Categoria", ["Alimentacao", "Transporte", "Moradia", "Saude", "Lazer", "Outros"], key="g_cat")
         g_desc = st.text_input("Descricao", key="g_desc")
-        g_valor = st.number_input("Valor (R$)", min_value=0.0, step=20.0, key="g_valor")
+        g_valor = st.number_input("Valor (R$)", min_value=0.0, step=20.0, value=None, key="g_valor", placeholder="Ex: 120")
         g_pg = st.selectbox("Pagamento", ["Debito", "Credito", "PIX", "Dinheiro"], key="g_pg")
         g_comp = st.checkbox("Definir mes de competencia (como fatura)", key="g_comp")
         g_mes = None
@@ -484,10 +487,13 @@ elif menu == "➕ Adicionar Dados":
         submit_g = st.form_submit_button("Adicionar gasto")
         if submit_g:
             try:
-                data_final = mes_para_data(g_mes) if g_mes else g_data
-                cf.adicionar_gasto(iso(data_final), g_cat, g_desc, float(g_valor), g_pg)
-                cf.salvar_dados()
-                st.success("Gasto adicionado!")
+                if g_valor is None:
+                    st.error("Informe o valor do gasto.")
+                else:
+                    data_final = mes_para_data(g_mes) if g_mes else g_data
+                    cf.adicionar_gasto(iso(data_final), g_cat, g_desc, float(g_valor), g_pg)
+                    cf.salvar_dados()
+                    st.success("Gasto adicionado!")
             except Exception as e:
                 st.error(f"Erro: {e}")
     
@@ -495,15 +501,18 @@ elif menu == "➕ Adicionar Dados":
         st.subheader("Investimentos")
         i_data = st.date_input("Data", value=date.today(), key="i_data")
         i_tipo = st.selectbox("Tipo", ["Tesouro Selic", "CDB", "ETF", "Acoes", "Poupanca", "Outros"], key="i_tipo")
-        i_valor = st.number_input("Valor (R$)", min_value=0.0, step=50.0, key="i_valor")
-        i_rent = st.number_input("Rentabilidade mensal (%)", min_value=0.0, step=0.1, value=0.7, key="i_rent")
+        i_valor = st.number_input("Valor (R$)", min_value=0.0, step=50.0, value=None, key="i_valor", placeholder="Ex: 1000")
+        i_rent = st.number_input("Rentabilidade mensal (%)", min_value=0.0, step=0.1, value=None, key="i_rent", placeholder="Ex: 0.7")
         i_obj = st.selectbox("Objetivo", ["Emergencia", "Casa", "Viagem", "Geral"], key="i_obj")
         submit_i = st.form_submit_button("Adicionar investimento")
         if submit_i:
             try:
-                cf.adicionar_investimento(iso(i_data), i_tipo, float(i_valor), float(i_rent), i_obj)
-                cf.salvar_dados()
-                st.success("Investimento adicionado!")
+                if i_valor is None or i_rent is None:
+                    st.error("Informe valor e rentabilidade.")
+                else:
+                    cf.adicionar_investimento(iso(i_data), i_tipo, float(i_valor), float(i_rent), i_obj)
+                    cf.salvar_dados()
+                    st.success("Investimento adicionado!")
             except Exception as e:
                 st.error(f"Erro: {e}")
     
@@ -535,15 +544,18 @@ elif menu == "➕ Adicionar Dados":
         c_mes_fatura_data = meses_opcoes[idx_selecionado][1]
         
         c_desc = st.text_input("Descricao", key="c_desc")
-        c_valor = st.number_input("Valor (R$)", min_value=0.0, step=50.0, key="c_valor")
+        c_valor = st.number_input("Valor (R$)", min_value=0.0, step=50.0, value=None, key="c_valor", placeholder="Ex: 300")
         c_parc = st.number_input("Parcelas", min_value=1, step=1, value=1, key="c_parc")
         submit_c = st.form_submit_button("Adicionar compra")
         if submit_c:
             if cartoes_disponiveis:
                 try:
-                    cf.adicionar_compra_cartao(iso(c_data), c_desc, float(c_valor), int(c_parc), cartao=c_cartao, vencimento_dia=c_venc, mes_fatura_ref=c_mes_fatura_data)
-                    cf.salvar_dados()
-                    st.success("Compra adicionada!")
+                    if c_valor is None:
+                        st.error("Informe o valor da compra.")
+                    else:
+                        cf.adicionar_compra_cartao(iso(c_data), c_desc, float(c_valor), int(c_parc), cartao=c_cartao, vencimento_dia=c_venc, mes_fatura_ref=c_mes_fatura_data)
+                        cf.salvar_dados()
+                        st.success("Compra adicionada!")
                 except Exception as e:
                     st.error(f"Erro: {e}")
             else:
