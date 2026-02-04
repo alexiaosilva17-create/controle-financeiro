@@ -232,7 +232,7 @@ if menu == "📊 Dashboard":
             df_cartao['vencimento_fatura'] = pd.to_datetime(df_cartao['vencimento_fatura'])
             df_cartao['mes_fatura'] = df_cartao['vencimento_fatura'].dt.strftime('%Y-%m')
         total_cartao_mes = df_cartao[df_cartao['mes_fatura'] == mes_ref]['valor'].sum()
-        total_cartao_todos = df_cartao['valor'].sum()
+        total_cartao_todos = df_cartao[df_cartao['pago'] == False]['valor'].sum()
     else:
         total_cartao_mes = 0
         total_cartao_todos = 0
@@ -240,7 +240,7 @@ if menu == "📊 Dashboard":
     col1.metric("Receitas", f"R$ {total_receitas:,.2f}")
     col2.metric("Gastos", f"R$ {total_gastos:,.2f}")
     col3.metric("Cartao (Mes)", f"R$ {total_cartao_mes:,.2f}")
-    col4.metric("Cartao (Total)", f"R$ {total_cartao_todos:,.2f}")
+    col4.metric("Cartao (Pendente)", f"R$ {total_cartao_todos:,.2f}")
     col5.metric("Investido (Mês)", f"R$ {total_investido:,.2f}")
     
     st.markdown("---")
