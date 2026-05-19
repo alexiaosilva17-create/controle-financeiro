@@ -1,0 +1,148 @@
+import json
+import os
+import time
+from datetime import datetime, timedelta, timezone
+import urllib.parse
+import xml.etree.ElementTree as ET
+
+import requests  # Você precisará instalar: pip install requests
+
+ARQUIVO_ENVIADOS = r"C:\Users\alexi\OneDrive\Documentos\arxiv_enviados.json"
+FUSO_LOCAL_HORAS = -3  # Brasil (ajuste se necessário)
+DIAS_ATRAS_FILTRO = 1  # 1 = ontem
+
+def enviar_whatsapp(mensagem, api_key, telefone):
+    mensagem_codificada = urllib.parse.quote(mensagem)
+    url = (
+        "https://api.callmebot.com/whatsapp.php"
+        f"?phone={telefone}&text={mensagem_codificada}&apikey={api_key}"
+    )
+    resposta = requests.get(url, timeout=30)
+    corpo = resposta.text.strip().lower()
+    if resposta.status_code != 200 or "error" in corpo or "invalid" in corpo:
+        raise RuntimeError(f"Falha ao enviar WhatsApp: status={resposta.status_code}, resposta={resposta.text}")
+
+
+def validar_api_key(api_key):
+    api = str(api_key).strip()
+    if not api or api == "YOUR_API_KEY_HERE":
+        raise ValueError("API_KEY não definida.")
+    if not api.isdigit() or len(api) < 6:
+        raise ValueError("API_KEY parece inválida. Verifique a chave recebida do CallMeBot.")
+
+
+def carregar_ids_enviados():
+    if not os.path.exists(ARQUIVO_ENVIADOS):
+        return set()
+    try:
+        with open(ARQUIVO_ENVIADOS, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return set(data)
+    except Exception:
+        pass
+    return set()
+
+
+def salvar_ids_enviados(ids):
+    with open(ARQUIVO_ENVIADOS, "w", encoding="utf-8") as f:
+        json.dump(sorted(ids), f, ensure_ascii=False, indent=2)
+
+
+def parse_data_arxiv_iso(texto_iso):
+    dt_utc = datetime.fromisoformat(texto_iso.replace("Z", "+00:00"))
+    tz_local = timezone(timedelta(hours=FUSO_LOCAL_HORAS))
+    return dt_utc.astimezone(tz_local).date()
+
+def buscar_e_notificar_arxiv():
+    # Configurações do usuário (pode vir de variáveis de ambiente ou hardcoded)
+    API_KEY = os.getenv("ARXIV_API_KEY", "4885091")
+    TELEFONE = os.getenv("ARXIV_TELEFONE", "5511959452561") # Ex: 5511999999999
+
+    validar_api_key(API_KEY)
+    
+    categorias = ['cond-mat.supr-con', 'cond-mat.str-el']
+    termos = ['Mott', 'Superconductivity', 'Hubbard', 'Cuprate', 'Majorana', 'Moiré', 'Pressure', 'Van der Waals', 'Graphene', 'Topological', 'Spin liquid', 'Kagome', 'Frustrated', 'Quantum criticality', 'Unconventional superconductivity', 'High-Tc', 'Twisted bilayer', 'Spin-orbit coupling']
+    max_resultados = 300
+
+    ids_enviados = carregar_ids_enviados()
+    enviados_hoje = 0
+    data_local = datetime.now(timezone(timedelta(hours=FUSO_LOCAL_HORAS))).date()
+    data_alvo = data_local - timedelta(days=DIAS_ATRAS_FILTRO)
+    
+    # Query na API do arXiv
+    query = "+OR+".join([f"cat:{c}" for c in categorias])
+    url_arxiv = (
+        "http://export.arxiv.org/api/query"
+        f"?search_query={query}&sortBy=submittedDate&sortOrder=descending&max_results={max_resultados}"
+    )
+
+    try:
+        resposta_arxiv = requests.get(url_arxiv, timeout=45)
+        resposta_arxiv.raise_for_status()
+    except requests.RequestException as e:
+        raise RuntimeError(f"Falha ao consultar o arXiv: {e}") from e
+
+    root = ET.fromstring(resposta_arxiv.content)
+    
+    ns = {'atom': 'http://www.w3.org/2005/Atom'}
+    
+    for entry in root.findall('atom:entry', ns):
+        titulo_node = entry.find('atom:title', ns)
+        resumo_node = entry.find('atom:summary', ns)
+        id_node = entry.find('atom:id', ns)
+        data_node = entry.find('atom:published', ns)
+
+        if titulo_node is None or resumo_node is None or id_node is None or data_node is None:
+            continue
+
+        titulo = titulo_node.text.strip().replace('\n', ' ')
+        resumo = resumo_node.text.lower()
+        link_abs = id_node.text.strip()
+        link_pdf = link_abs.replace('/abs/', '/pdf/') + '.pdf'
+        artigo_id = link_abs
+
+        # Apenas artigos da data-alvo (padrão: ontem)
+        data_artigo = parse_data_arxiv_iso(data_node.text.strip())
+        if data_artigo != data_alvo:
+            continue
+
+        # Evita duplicados entre execuções
+        if artigo_id in ids_enviados:
+            continue
+
+        # Filtro por termos de interesse
+        if any(t.lower() in (titulo.lower() + resumo) for t in termos):
+            msg = (
+                "*Novo Artigo arXiv*\n\n"
+                f"*Título:* {titulo}\n\n"
+                f"*Resumo:* {link_abs}\n"
+                f"*PDF:* {link_pdf}"
+            )
+            try:
+                enviar_whatsapp(msg, API_KEY, TELEFONE)
+                ids_enviados.add(artigo_id)
+                salvar_ids_enviados(ids_enviados)  # Salva incrementalmente para não perder em caso de erro
+                enviados_hoje += 1
+                print(f"Enviado: {titulo[:70]}...")
+            except RuntimeError as e:
+                print(f"ERRO ao enviar '{titulo[:60]}': {e}")
+                print("Aguardando 30s antes de continuar...")
+                time.sleep(30)
+                continue
+            time.sleep(10)  # Pausa para evitar rate limiting do CallMeBot
+
+    salvar_ids_enviados(ids_enviados)
+    print(f"Data-alvo do filtro: {data_alvo}")
+    print(f"Total enviado: {enviados_hoje}")
+    if enviados_hoje == 0:
+        print("Nenhum artigo enviado. Verifique as datas abaixo para diagnosticar:")
+        for entry in root.findall('atom:entry', ns):
+            data_node = entry.find('atom:updated', ns) or entry.find('atom:published', ns)
+            titulo_node = entry.find('atom:title', ns)
+            if data_node is not None and titulo_node is not None:
+                data_artigo = parse_data_arxiv_iso(data_node.text.strip())
+                print(f"  data={data_artigo} | {titulo_node.text.strip()[:60]}")
+
+# Executa o script
+buscar_e_notificar_arxiv()

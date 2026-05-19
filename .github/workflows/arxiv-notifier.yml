@@ -1,0 +1,38 @@
+name: Buscar e Notificar Artigos arXiv
+
+on:
+  schedule:
+    # Executa diariamente às 8:00 AM e 8:00 PM (UTC-3 = 11:00 AM e 11:00 PM BRT)
+    - cron: '0 11,23 * * *'
+  workflow_dispatch:  # Permite execução manual via GitHub
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v3
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependências
+        run: pip install requests
+
+      - name: Executar script de notificação
+        env:
+          ARXIV_API_KEY: ${{ secrets.ARXIV_API_KEY }}
+          ARXIV_TELEFONE: ${{ secrets.ARXIV_TELEFONE }}
+        run: python "Receber artigo no zap"
+
+      - name: Fazer commit das mudanças
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add arxiv_enviados.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Update: artigos arXiv enviados" && git push)
+        continue-on-error: true
