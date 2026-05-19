@@ -2,12 +2,14 @@ import json
 import os
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import urllib.parse
 import xml.etree.ElementTree as ET
 
 import requests  # Você precisará instalar: pip install requests
 
-ARQUIVO_ENVIADOS = r"C:\Users\alexi\OneDrive\Documentos\arxiv_enviados.json"
+BASE_DIR = Path(__file__).resolve().parent
+ARQUIVO_ENVIADOS = Path(os.getenv("ARXIV_ENVIADOS_PATH", BASE_DIR / "arxiv_enviados.json"))
 FUSO_LOCAL_HORAS = -3  # Brasil (ajuste se necessário)
 DIAS_ATRAS_FILTRO = 1  # 1 = ontem
 
@@ -45,6 +47,7 @@ def carregar_ids_enviados():
 
 
 def salvar_ids_enviados(ids):
+    ARQUIVO_ENVIADOS.parent.mkdir(parents=True, exist_ok=True)
     with open(ARQUIVO_ENVIADOS, "w", encoding="utf-8") as f:
         json.dump(sorted(ids), f, ensure_ascii=False, indent=2)
 
@@ -144,5 +147,5 @@ def buscar_e_notificar_arxiv():
                 data_artigo = parse_data_arxiv_iso(data_node.text.strip())
                 print(f"  data={data_artigo} | {titulo_node.text.strip()[:60]}")
 
-# Executa o script
-buscar_e_notificar_arxiv()
+if __name__ == "__main__":
+    buscar_e_notificar_arxiv()
