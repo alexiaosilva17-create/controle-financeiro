@@ -4,10 +4,10 @@ on:
   schedule:
     # Executa diariamente às 8:00 AM e 8:00 PM (UTC-3 = 11:00 AM e 11:00 PM BRT)
     - cron: '0 11,23 * * *'
-  permissions:
-    contents: write
-
   workflow_dispatch:  # Permite execução manual via GitHub
+
+permissions:
+  contents: write
 
 jobs:
   notify:
