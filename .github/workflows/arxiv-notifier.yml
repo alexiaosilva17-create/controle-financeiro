@@ -9,6 +9,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   notify:
     runs-on: ubuntu-latest
@@ -36,7 +39,9 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add arxiv_enviados.json
+          if [ -f arxiv_enviados.json ]; then
+            git add arxiv_enviados.json
+          fi
           if ! git diff --cached --quiet; then
             git commit -m "Update: artigos arXiv enviados"
             git push
