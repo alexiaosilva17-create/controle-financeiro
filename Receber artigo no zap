@@ -1,9 +1,12 @@
 import json
 import os
 import random
+import re
 import time
 import traceback
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
+import html
 from pathlib import Path
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -97,6 +100,56 @@ def buscar_arxiv_com_retentativas(url_arxiv, tentativas=4, timeout=45):
             else:
                 return None
 
+
+def limpar_html(texto):
+    if not texto:
+        return ""
+    texto = html.unescape(texto)
+    texto = re.sub(r"<[^>]+>", " ", texto)
+    return re.sub(r"\s+", " ", texto).strip()
+
+
+def buscar_arxiv_via_rss(categorias, timeout=30):
+    headers = {"User-Agent": ARXIV_USER_AGENT}
+    artigos = []
+    for categoria in categorias:
+        url_rss = f"https://rss.arxiv.org/rss/{categoria}"
+        try:
+            resposta = requests.get(url_rss, headers=headers, timeout=timeout)
+            resposta.raise_for_status()
+            root_rss = ET.fromstring(resposta.content)
+        except (requests.RequestException, ET.ParseError) as e:
+            print(f"Falha ao buscar RSS de {categoria}: {e}")
+            continue
+
+        for item in root_rss.findall("./channel/item"):
+            titulo_node = item.find("title")
+            link_node = item.find("link")
+            desc_node = item.find("description")
+            data_node = item.find("pubDate")
+            if titulo_node is None or link_node is None or data_node is None:
+                continue
+
+            link_abs = (link_node.text or "").strip()
+            if not link_abs:
+                continue
+
+            try:
+                data_pub = parsedate_to_datetime((data_node.text or "").strip())
+                data_pub_iso = data_pub.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            except Exception:
+                continue
+
+            artigos.append(
+                {
+                    "title": (titulo_node.text or "").strip(),
+                    "summary": limpar_html(desc_node.text if desc_node is not None else ""),
+                    "id": link_abs,
+                    "published": data_pub_iso,
+                }
+            )
+    return artigos
+
 def buscar_e_notificar_arxiv():
     # Configurações do usuário (pode vir de variáveis de ambiente ou hardcoded)
     API_KEY = os.getenv("ARXIV_API_KEY", "4885091")
@@ -124,36 +177,49 @@ def buscar_e_notificar_arxiv():
         f"?search_query={query}&sortBy=submittedDate&sortOrder=descending&max_results={max_resultados}"
     )
 
+    artigos = []
     conteudo_arxiv = buscar_arxiv_com_retentativas(url_arxiv, tentativas=4, timeout=45)
-    if not conteudo_arxiv:
-        print("Falha ao consultar o arXiv após múltiplas tentativas. Encerrando execução sem erro fatal.")
+    if conteudo_arxiv:
+        try:
+            root = ET.fromstring(conteudo_arxiv)
+            ns = {'atom': 'http://www.w3.org/2005/Atom'}
+            for entry in root.findall('atom:entry', ns):
+                titulo_node = entry.find('atom:title', ns)
+                resumo_node = entry.find('atom:summary', ns)
+                id_node = entry.find('atom:id', ns)
+                data_node = entry.find('atom:published', ns)
+
+                if titulo_node is None or resumo_node is None or id_node is None or data_node is None:
+                    continue
+
+                artigos.append(
+                    {
+                        "title": titulo_node.text.strip().replace('\n', ' '),
+                        "summary": resumo_node.text,
+                        "id": id_node.text.strip(),
+                        "published": data_node.text.strip(),
+                    }
+                )
+        except ET.ParseError as e:
+            print(f"Falha ao interpretar resposta XML do arXiv API: {e}")
+
+    if not artigos:
+        print("API do arXiv indisponível/rate-limited. Tentando fallback via RSS...")
+        artigos = buscar_arxiv_via_rss(categorias)
+
+    if not artigos:
+        print("Falha ao obter artigos via API e via RSS. Encerrando execução sem erro fatal.")
         return
 
-    try:
-        root = ET.fromstring(conteudo_arxiv)
-    except ET.ParseError as e:
-        print(f"Falha ao interpretar resposta XML do arXiv: {e}")
-        return
-    
-    ns = {'atom': 'http://www.w3.org/2005/Atom'}
-    
-    for entry in root.findall('atom:entry', ns):
-        titulo_node = entry.find('atom:title', ns)
-        resumo_node = entry.find('atom:summary', ns)
-        id_node = entry.find('atom:id', ns)
-        data_node = entry.find('atom:published', ns)
-
-        if titulo_node is None or resumo_node is None or id_node is None or data_node is None:
-            continue
-
-        titulo = titulo_node.text.strip().replace('\n', ' ')
-        resumo = resumo_node.text.lower()
-        link_abs = id_node.text.strip()
+    for artigo in artigos:
+        titulo = artigo["title"]
+        resumo = (artigo.get("summary") or "").lower()
+        link_abs = artigo["id"]
         link_pdf = link_abs.replace('/abs/', '/pdf/') + '.pdf'
         artigo_id = link_abs
 
         # Apenas artigos da data-alvo (padrão: ontem)
-        data_artigo = parse_data_arxiv_iso(data_node.text.strip())
+        data_artigo = parse_data_arxiv_iso(artigo["published"])
         if data_artigo != data_alvo:
             continue
 
@@ -187,12 +253,9 @@ def buscar_e_notificar_arxiv():
     print(f"Total enviado: {enviados_hoje}")
     if enviados_hoje == 0:
         print("Nenhum artigo enviado. Verifique as datas abaixo para diagnosticar:")
-        for entry in root.findall('atom:entry', ns):
-            data_node = entry.find('atom:updated', ns) or entry.find('atom:published', ns)
-            titulo_node = entry.find('atom:title', ns)
-            if data_node is not None and titulo_node is not None:
-                data_artigo = parse_data_arxiv_iso(data_node.text.strip())
-                print(f"  data={data_artigo} | {titulo_node.text.strip()[:60]}")
+        for artigo in artigos[:20]:
+            data_artigo = parse_data_arxiv_iso(artigo["published"])
+            print(f"  data={data_artigo} | {artigo['title'][:60]}")
 
 if __name__ == "__main__":
     try:

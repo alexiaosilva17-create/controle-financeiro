@@ -39,6 +39,8 @@ jobs:
         env:
           ARXIV_API_KEY: ${{ secrets.ARXIV_API_KEY }}
           ARXIV_TELEFONE: ${{ secrets.ARXIV_TELEFONE }}
+          ARXIV_MAX_RESULTADOS: '25'
+          ARXIV_USER_AGENT: 'arxiv-whatsapp-notifier/1.0 (mailto:alexiaosilva17+arxiv@gmail.com)'
         run: python "Receber artigo no zap"
 
       - name: Fazer commit das mudanças
