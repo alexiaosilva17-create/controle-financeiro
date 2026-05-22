@@ -1,5 +1,6 @@
 import json
 import os
+import random
 import time
 import traceback
 from datetime import datetime, timedelta, timezone
@@ -13,6 +14,10 @@ BASE_DIR = Path(__file__).resolve().parent
 ARQUIVO_ENVIADOS = Path(os.getenv("ARXIV_ENVIADOS_PATH", BASE_DIR / "arxiv_enviados.json"))
 FUSO_LOCAL_HORAS = -3  # Brasil (ajuste se necessário)
 DIAS_ATRAS_FILTRO = 1  # 1 = ontem
+ARXIV_USER_AGENT = os.getenv(
+    "ARXIV_USER_AGENT",
+    "arxiv-whatsapp-notifier/1.0 (mailto:alexia@example.com)",
+)
 
 def enviar_whatsapp(mensagem, api_key, telefone):
     mensagem_codificada = urllib.parse.quote(mensagem)
@@ -59,16 +64,36 @@ def parse_data_arxiv_iso(texto_iso):
     return dt_utc.astimezone(tz_local).date()
 
 
-def buscar_arxiv_com_retentativas(url_arxiv, tentativas=3, timeout=45):
+def buscar_arxiv_com_retentativas(url_arxiv, tentativas=4, timeout=45):
+    headers = {
+        "User-Agent": ARXIV_USER_AGENT,
+        "Accept": "application/atom+xml,text/xml;q=0.9,*/*;q=0.8",
+    }
     for tentativa in range(1, tentativas + 1):
         try:
-            resposta_arxiv = requests.get(url_arxiv, timeout=timeout)
+            resposta_arxiv = requests.get(url_arxiv, headers=headers, timeout=timeout)
+            if resposta_arxiv.status_code == 429:
+                retry_after = resposta_arxiv.headers.get("Retry-After")
+                if retry_after and retry_after.isdigit():
+                    espera = int(retry_after)
+                else:
+                    # Backoff progressivo com jitter para reduzir chance de novo 429.
+                    espera = min(120, 20 * tentativa) + random.randint(0, 5)
+                print(
+                    f"Tentativa {tentativa}/{tentativas} recebeu 429. "
+                    f"Aguardando {espera}s antes da próxima tentativa..."
+                )
+                if tentativa < tentativas:
+                    time.sleep(espera)
+                    continue
+                return None
             resposta_arxiv.raise_for_status()
             return resposta_arxiv.content
         except requests.RequestException as e:
             print(f"Tentativa {tentativa}/{tentativas} falhou ao consultar o arXiv: {e}")
             if tentativa < tentativas:
-                time.sleep(5)
+                espera = 8 + (tentativa * 5)
+                time.sleep(espera)
             else:
                 return None
 
@@ -85,7 +110,7 @@ def buscar_e_notificar_arxiv():
     
     categorias = ['cond-mat.supr-con', 'cond-mat.str-el']
     termos = ['Mott', 'Superconductivity', 'Hubbard', 'Cuprate', 'Majorana', 'Moiré', 'Pressure', 'Van der Waals', 'Graphene', 'Topological', 'Spin liquid', 'Kagome', 'Frustrated', 'Quantum criticality', 'Unconventional superconductivity', 'High-Tc', 'Twisted bilayer', 'Spin-orbit coupling']
-    max_resultados = 300
+    max_resultados = int(os.getenv("ARXIV_MAX_RESULTADOS", "100"))
 
     ids_enviados = carregar_ids_enviados()
     enviados_hoje = 0
@@ -95,11 +120,11 @@ def buscar_e_notificar_arxiv():
     # Query na API do arXiv
     query = "+OR+".join([f"cat:{c}" for c in categorias])
     url_arxiv = (
-        "http://export.arxiv.org/api/query"
+        "https://export.arxiv.org/api/query"
         f"?search_query={query}&sortBy=submittedDate&sortOrder=descending&max_results={max_resultados}"
     )
 
-    conteudo_arxiv = buscar_arxiv_com_retentativas(url_arxiv, tentativas=3, timeout=45)
+    conteudo_arxiv = buscar_arxiv_com_retentativas(url_arxiv, tentativas=4, timeout=45)
     if not conteudo_arxiv:
         print("Falha ao consultar o arXiv após múltiplas tentativas. Encerrando execução sem erro fatal.")
         return
