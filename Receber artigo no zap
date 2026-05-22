@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import urllib.parse
@@ -57,12 +58,30 @@ def parse_data_arxiv_iso(texto_iso):
     tz_local = timezone(timedelta(hours=FUSO_LOCAL_HORAS))
     return dt_utc.astimezone(tz_local).date()
 
+
+def buscar_arxiv_com_retentativas(url_arxiv, tentativas=3, timeout=45):
+    for tentativa in range(1, tentativas + 1):
+        try:
+            resposta_arxiv = requests.get(url_arxiv, timeout=timeout)
+            resposta_arxiv.raise_for_status()
+            return resposta_arxiv.content
+        except requests.RequestException as e:
+            print(f"Tentativa {tentativa}/{tentativas} falhou ao consultar o arXiv: {e}")
+            if tentativa < tentativas:
+                time.sleep(5)
+            else:
+                return None
+
 def buscar_e_notificar_arxiv():
     # Configurações do usuário (pode vir de variáveis de ambiente ou hardcoded)
     API_KEY = os.getenv("ARXIV_API_KEY", "4885091")
     TELEFONE = os.getenv("ARXIV_TELEFONE", "5511959452561") # Ex: 5511999999999
 
-    validar_api_key(API_KEY)
+    try:
+        validar_api_key(API_KEY)
+    except ValueError as e:
+        print(f"Configuração inválida: {e}")
+        return
     
     categorias = ['cond-mat.supr-con', 'cond-mat.str-el']
     termos = ['Mott', 'Superconductivity', 'Hubbard', 'Cuprate', 'Majorana', 'Moiré', 'Pressure', 'Van der Waals', 'Graphene', 'Topological', 'Spin liquid', 'Kagome', 'Frustrated', 'Quantum criticality', 'Unconventional superconductivity', 'High-Tc', 'Twisted bilayer', 'Spin-orbit coupling']
@@ -80,13 +99,16 @@ def buscar_e_notificar_arxiv():
         f"?search_query={query}&sortBy=submittedDate&sortOrder=descending&max_results={max_resultados}"
     )
 
-    try:
-        resposta_arxiv = requests.get(url_arxiv, timeout=45)
-        resposta_arxiv.raise_for_status()
-    except requests.RequestException as e:
-        raise RuntimeError(f"Falha ao consultar o arXiv: {e}") from e
+    conteudo_arxiv = buscar_arxiv_com_retentativas(url_arxiv, tentativas=3, timeout=45)
+    if not conteudo_arxiv:
+        print("Falha ao consultar o arXiv após múltiplas tentativas. Encerrando execução sem erro fatal.")
+        return
 
-    root = ET.fromstring(resposta_arxiv.content)
+    try:
+        root = ET.fromstring(conteudo_arxiv)
+    except ET.ParseError as e:
+        print(f"Falha ao interpretar resposta XML do arXiv: {e}")
+        return
     
     ns = {'atom': 'http://www.w3.org/2005/Atom'}
     
@@ -148,4 +170,9 @@ def buscar_e_notificar_arxiv():
                 print(f"  data={data_artigo} | {titulo_node.text.strip()[:60]}")
 
 if __name__ == "__main__":
-    buscar_e_notificar_arxiv()
+    try:
+        buscar_e_notificar_arxiv()
+    except Exception as e:
+        print(f"Erro inesperado durante execução: {e}")
+        print(traceback.format_exc())
+        print("Execução finalizada sem falha fatal para manter o workflow agendado ativo.")
